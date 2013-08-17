@@ -1,18 +1,21 @@
 package brickpi
 
 /*
-*  Matthew Richardson
+*  This is a library of functions for the RPi to communicate with the BrickPi.
+*
+*  Based on BrickPi_C (Matthew Richardson)
 *  matthewrichardson37<at>gmail.com
 *  http://mattallen37.wordpress.com/
-*  Initial date: June 4, 2013
-*  Last updated: July 2, 2013
-*
-*  You may use this code as you wish, provided you give credit where it's due.
-*
-*  This is a library of functions for the RPi to communicate with the BrickPi.
  */
 
 // #include <wiringPi.h>
+// #include "tick.h"
+
+import (
+	"C"
+	"log"
+	"time"
+)
 
 const (
 	PORT_A = 0
@@ -112,6 +115,8 @@ type BrickPiStruct struct {
 	SensorI2CIn      [4][8][16]byte // The I2C input buffers
 }
 
+var BrickPi = new(BrickPiStruct)
+
 var Array [256]byte
 var BytesReceived byte
 
@@ -121,7 +126,7 @@ func BrickPiChangeAddress(OldAddr byte, NewAddr byte) int32 {
 	Array[BYTE_NEW_ADDRESS] = NewAddr
 	BrickPiTx(OldAddr, 2, Array)
 
-	if BrickPiRx(&BytesReceived, Array, 5000) {
+	if BrickPiRx(&BytesReceived, &Array, 5000) != 0 {
 		return -1
 	}
 	if !(BytesReceived == 1 && Array[BYTE_MSG_TYPE] == MSG_TYPE_CHANGE_ADDR) {
@@ -135,12 +140,12 @@ func BrickPiSetTimeout() int32 {
 	var i byte = 0
 	for i < 2 {
 		Array[BYTE_MSG_TYPE] = MSG_TYPE_TIMEOUT_SETTINGS
-		Array[BYTE_TIMEOUT] = (BrickPi.Timeout & 0xFF)
-		Array[(BYTE_TIMEOUT + 1)] = ((BrickPi.Timeout / 256) & 0xFF)
-		Array[(BYTE_TIMEOUT + 2)] = ((BrickPi.Timeout / 65536) & 0xFF)
-		Array[(BYTE_TIMEOUT + 3)] = ((BrickPi.Timeout / 16777216) & 0xFF)
+		Array[BYTE_TIMEOUT] = byte(BrickPi.Timeout & 0xFF)
+		Array[(BYTE_TIMEOUT + 1)] = byte((BrickPi.Timeout / 256) & 0xFF)
+		Array[(BYTE_TIMEOUT + 2)] = byte((BrickPi.Timeout / 65536) & 0xFF)
+		Array[(BYTE_TIMEOUT + 3)] = byte((BrickPi.Timeout / 16777216) & 0xFF)
 		BrickPiTx(BrickPi.Address[i], 5, Array)
-		if BrickPiRx(&BytesReceived, Array, 2500) {
+		if BrickPiRx(&BytesReceived, &Array, 2500) != 0 {
 			return -1
 		}
 		if !(BytesReceived == 1 && Array[BYTE_MSG_TYPE] == MSG_TYPE_TIMEOUT_SETTINGS) {
@@ -156,21 +161,21 @@ var Bit_Offset uint32 = 0
 func AddBits(byte_offset byte, bit_offset byte, bits byte, value uint32) {
 	var i byte = 0
 	for i < bits {
-		if value & 0x01 {
-			Array[(byte_offset + ((bit_offset + Bit_Offset + i) / 8))] |= (0x01 << ((bit_offset + Bit_Offset + i) % 8))
+		if value&0x01 != 0 {
+			Array[(uint32(byte_offset) + ((uint32(bit_offset) + Bit_Offset + uint32(i)) / 8))] |= byte(0x01 << ((uint32(bit_offset) + Bit_Offset + uint32(i)) % 8))
 		}
 		value /= 2
 		i++
 	}
-	Bit_Offset += bits
+	Bit_Offset += uint32(bits)
 }
 
-func GetBits(byte_offset byte, bit_offset byte, bits byte) uint32 {
+func GetBits(byte_offset uint32, bit_offset uint32, bits uint32) uint32 {
 	var Result uint32 = 0
 	i := bits
-	for i {
+	for i != 0 {
 		Result *= 2
-		Result |= ((Array[(byte_offset+((bit_offset+Bit_Offset+(i-1))/8))] >> ((bit_offset + Bit_Offset + (i - 1)) % 8)) & 0x01)
+		Result |= ((uint32(Array[(byte_offset+((bit_offset+Bit_Offset+(i-1))/8))]) >> ((bit_offset + Bit_Offset + (i - 1)) % 8)) & 0x01)
 		i--
 	}
 	Bit_Offset += bits
@@ -180,7 +185,7 @@ func GetBits(byte_offset byte, bit_offset byte, bits byte) uint32 {
 func BitsNeeded(value uint32) byte {
 	var i byte = 0
 	for i < 32 {
-		if !value {
+		if value == 0 {
 			return i
 		}
 		value /= 2
@@ -192,8 +197,8 @@ func BitsNeeded(value uint32) byte {
 func BrickPiSetupSensors() int32 {
 	var i byte = 0
 	for i < 2 {
-		var ii int32 = 0
-		for ii < 256 {
+		var ii byte = 0
+		for ii <= 255 {
 			Array[ii] = 0
 			ii++
 		}
@@ -206,7 +211,7 @@ func BrickPiSetupSensors() int32 {
 			var port byte = (i * 2) + ii
 			if Array[BYTE_SENSOR_1_TYPE+ii] == TYPE_SENSOR_I2C ||
 				Array[BYTE_SENSOR_1_TYPE+ii] == TYPE_SENSOR_I2C_9V {
-				AddBits(3, 0, 8, BrickPi.SensorI2CSpeed[port])
+				AddBits(3, 0, 8, uint32(BrickPi.SensorI2CSpeed[port]))
 
 				if BrickPi.SensorI2CDevices[port] > 8 {
 					BrickPi.SensorI2CDevices[port] = 8
@@ -216,18 +221,18 @@ func BrickPiSetupSensors() int32 {
 					BrickPi.SensorI2CDevices[port] = 1
 				}
 
-				AddBits(3, 0, 3, (BrickPi.SensorI2CDevices[port] - 1))
+				AddBits(3, 0, 3, uint32(BrickPi.SensorI2CDevices[port]-1))
 
 				var device byte = 0
 				for device < BrickPi.SensorI2CDevices[port] {
-					AddBits(3, 0, 7, (BrickPi.SensorI2CAddr[port][device] >> 1))
-					AddBits(3, 0, 2, BrickPi.SensorSettings[port][device])
-					if BrickPi.SensorSettings[port][device] & BIT_I2C_SAME {
-						AddBits(3, 0, 4, BrickPi.SensorI2CWrite[port][device])
-						AddBits(3, 0, 4, BrickPi.SensorI2CRead[port][device])
+					AddBits(3, 0, 7, uint32(BrickPi.SensorI2CAddr[port][device]>>1))
+					AddBits(3, 0, 2, uint32(BrickPi.SensorSettings[port][device]))
+					if BrickPi.SensorSettings[port][device]&BIT_I2C_SAME != 0 {
+						AddBits(3, 0, 4, uint32(BrickPi.SensorI2CWrite[port][device]))
+						AddBits(3, 0, 4, uint32(BrickPi.SensorI2CRead[port][device]))
 						var out_byte byte = 0
 						for out_byte < BrickPi.SensorI2CWrite[port][device] {
-							AddBits(3, 0, 8, BrickPi.SensorI2COut[port][device][out_byte])
+							AddBits(3, 0, 8, uint32(BrickPi.SensorI2COut[port][device][out_byte]))
 							out_byte++
 						}
 					}
@@ -236,9 +241,9 @@ func BrickPiSetupSensors() int32 {
 			}
 			ii++
 		}
-		var UART_TX_BYTES byte = (((Bit_Offset + 7) / 8) + 3)
+		var UART_TX_BYTES byte = byte(((Bit_Offset + 7) / 8) + 3)
 		BrickPiTx(BrickPi.Address[i], UART_TX_BYTES, Array)
-		if BrickPiRx(&BytesReceived, Array, 500000) {
+		if BrickPiRx(&BytesReceived, &Array, 500000) != 0 {
 			return -1
 		}
 		if !(BytesReceived == 1 && Array[BYTE_MSG_TYPE] == MSG_TYPE_SENSOR_TYPE) {
@@ -253,14 +258,14 @@ var Retried byte = 0 // For re-trying a failed update.
 
 func BrickPiUpdateValues() int32 {
 	var i byte = 0
-	var ii uint32 = 0
+	var ii byte = 0
 	for i < 2 {
 		Retried = 0
 
 	__RETRY_COMMUNICATION__:
 
 		ii = 0
-		for ii < 256 {
+		for ii <= 255 {
 			Array[ii] = 0
 			ii++
 		}
@@ -274,7 +279,7 @@ func BrickPiUpdateValues() int32 {
 		ii = 0 // use this for encoder offset support
 		for ii < 2 {
 			var port byte = (i * 2) + ii
-			if BrickPi.EncoderOffset[port] {
+			if BrickPi.EncoderOffset[port] != 0 {
 				var Temp_Value int32 = BrickPi.EncoderOffset[port]
 				var Temp_ENC_DIR byte
 				var Temp_BitsNeeded byte
@@ -284,11 +289,11 @@ func BrickPiUpdateValues() int32 {
 					Temp_ENC_DIR = 1
 					Temp_Value *= (-1)
 				}
-				Temp_BitsNeeded = (BitsNeeded(Temp_Value) + 1)
-				AddBits(1, 0, 5, Temp_BitsNeeded)
+				Temp_BitsNeeded = (BitsNeeded(uint32(Temp_Value)) + 1)
+				AddBits(1, 0, 5, uint32(Temp_BitsNeeded))
 				Temp_Value *= 2
-				Temp_Value |= Temp_ENC_DIR
-				AddBits(1, 0, Temp_BitsNeeded, Temp_Value)
+				Temp_Value |= int32(Temp_ENC_DIR)
+				AddBits(1, 0, Temp_BitsNeeded, uint32(Temp_Value))
 			} else {
 				AddBits(1, 0, 1, 0)
 			}
@@ -309,7 +314,7 @@ func BrickPiUpdateValues() int32 {
 			if speed > 255 {
 				speed = 255
 			}
-			AddBits(1, 0, 10, ((((speed & 0xFF) << 2) | (dir << 1) | (BrickPi.MotorEnable[port] & 0x01)) & 0x3FF))
+			AddBits(1, 0, 10, uint32((((speed&0xFF)<<2)|(int32(dir)<<1)|int32(BrickPi.MotorEnable[port]&0x01))&0x3FF))
 			ii++
 		}
 
@@ -320,12 +325,12 @@ func BrickPiUpdateValues() int32 {
 				BrickPi.SensorType[port] == TYPE_SENSOR_I2C_9V {
 				var device byte = 0
 				for device < BrickPi.SensorI2CDevices[port] {
-					if !(BrickPi.SensorSettings[port][device] & BIT_I2C_SAME) {
-						AddBits(1, 0, 4, BrickPi.SensorI2CWrite[port][device])
-						AddBits(1, 0, 4, BrickPi.SensorI2CRead[port][device])
+					if (BrickPi.SensorSettings[port][device] & BIT_I2C_SAME) == 0 {
+						AddBits(1, 0, 4, uint32(BrickPi.SensorI2CWrite[port][device]))
+						AddBits(1, 0, 4, uint32(BrickPi.SensorI2CRead[port][device]))
 						var out_byte byte = 0
 						for out_byte < BrickPi.SensorI2CWrite[port][device] {
-							AddBits(1, 0, 8, BrickPi.SensorI2COut[port][device][out_byte])
+							AddBits(1, 0, 8, uint32(BrickPi.SensorI2COut[port][device][out_byte]))
 							out_byte++
 						}
 					}
@@ -335,17 +340,17 @@ func BrickPiUpdateValues() int32 {
 			ii++
 		}
 
-		var UART_TX_BYTES byte = (((Bit_Offset + 7) / 8) + 1)
+		var UART_TX_BYTES byte = byte(((Bit_Offset + 7) / 8) + 1)
 		BrickPiTx(BrickPi.Address[i], UART_TX_BYTES, Array)
 
-		var result int32 = BrickPiRx(&BytesReceived, Array, 7500)
+		var result int32 = BrickPiRx(&BytesReceived, &Array, 7500)
 
 		if result != -2 { // -2 is the only error that indicates that the BrickPi uC did not properly receive the message
 			BrickPi.EncoderOffset[((i * 2) + PORT_A)] = 0
 			BrickPi.EncoderOffset[((i * 2) + PORT_B)] = 0
 		}
 
-		if result || (Array[BYTE_MSG_TYPE] != MSG_TYPE_VALUES) {
+		if result != 0 || (Array[BYTE_MSG_TYPE] != MSG_TYPE_VALUES) {
 			log.Printf("BrickPiRx error: %d\n", result)
 			if Retried < 2 {
 				Retried++
@@ -359,18 +364,18 @@ func BrickPiUpdateValues() int32 {
 		Bit_Offset = 0
 
 		var Temp_BitsUsed [2]byte // Used for encoder values
-		Temp_BitsUsed[0] = GetBits(1, 0, 5)
-		Temp_BitsUsed[1] = GetBits(1, 0, 5)
+		Temp_BitsUsed[0] = byte(GetBits(1, 0, 5))
+		Temp_BitsUsed[1] = byte(GetBits(1, 0, 5))
 		var Temp_EncoderVal uint32
 
 		ii = 0
 		for ii < 2 {
-			Temp_EncoderVal = GetBits(1, 0, Temp_BitsUsed[ii])
-			if Temp_EncoderVal & 0x01 {
+			Temp_EncoderVal = GetBits(1, 0, uint32(Temp_BitsUsed[ii]))
+			if Temp_EncoderVal&0x01 != 0 {
 				Temp_EncoderVal /= 2
-				BrickPi.Encoder[ii+(i*2)] = Temp_EncoderVal * (-1)
+				BrickPi.Encoder[ii+(i*2)] = int32(Temp_EncoderVal) * (-1)
 			} else {
-				BrickPi.Encoder[ii+(i*2)] = (Temp_EncoderVal / 2)
+				BrickPi.Encoder[ii+(i*2)] = int32(Temp_EncoderVal / 2)
 			}
 			ii++
 		}
@@ -380,28 +385,28 @@ func BrickPiUpdateValues() int32 {
 			var port byte = ii + (i * 2)
 			switch BrickPi.SensorType[port] {
 			case TYPE_SENSOR_TOUCH:
-				BrickPi.Sensor[port] = GetBits(1, 0, 1)
+				BrickPi.Sensor[port] = int32(GetBits(1, 0, 1))
 				break
 			case TYPE_SENSOR_ULTRASONIC_CONT:
 			case TYPE_SENSOR_ULTRASONIC_SS:
-				BrickPi.Sensor[port] = GetBits(1, 0, 8)
+				BrickPi.Sensor[port] = int32(GetBits(1, 0, 8))
 				break
 			case TYPE_SENSOR_COLOR_FULL:
-				BrickPi.Sensor[port] = GetBits(1, 0, 3)
-				BrickPi.SensorArray[port][INDEX_BLANK] = GetBits(1, 0, 10)
-				BrickPi.SensorArray[port][INDEX_RED] = GetBits(1, 0, 10)
-				BrickPi.SensorArray[port][INDEX_GREEN] = GetBits(1, 0, 10)
-				BrickPi.SensorArray[port][INDEX_BLUE] = GetBits(1, 0, 10)
+				BrickPi.Sensor[port] = int32(GetBits(1, 0, 3))
+				BrickPi.SensorArray[port][INDEX_BLANK] = int32(GetBits(1, 0, 10))
+				BrickPi.SensorArray[port][INDEX_RED] = int32(GetBits(1, 0, 10))
+				BrickPi.SensorArray[port][INDEX_GREEN] = int32(GetBits(1, 0, 10))
+				BrickPi.SensorArray[port][INDEX_BLUE] = int32(GetBits(1, 0, 10))
 				break
 			case TYPE_SENSOR_I2C:
 			case TYPE_SENSOR_I2C_9V:
-				BrickPi.Sensor[port] = GetBits(1, 0, BrickPi.SensorI2CDevices[port])
+				BrickPi.Sensor[port] = int32(GetBits(1, 0, uint32(BrickPi.SensorI2CDevices[port])))
 				var device byte = 0
 				for device < BrickPi.SensorI2CDevices[port] {
-					if BrickPi.Sensor[port] & (0x01 << device) {
+					if BrickPi.Sensor[port]&(0x01<<device) != 0 {
 						var in_byte byte = 0
 						for in_byte < BrickPi.SensorI2CRead[port][device] {
-							BrickPi.SensorI2CIn[port][device][in_byte] = GetBits(1, 0, 8)
+							BrickPi.SensorI2CIn[port][device][in_byte] = byte(GetBits(1, 0, 8))
 							in_byte++
 						}
 					}
@@ -416,7 +421,7 @@ func BrickPiUpdateValues() int32 {
 			case TYPE_SENSOR_COLOR_BLUE:
 			case TYPE_SENSOR_COLOR_NONE:
 			default:
-				BrickPi.Sensor[(ii + (i * 2))] = GetBits(1, 0, 10)
+				BrickPi.Sensor[(ii + (i * 2))] = int32(GetBits(1, 0, 10))
 			}
 			ii++
 		}
@@ -428,14 +433,14 @@ func BrickPiUpdateValues() int32 {
 var UART_file_descriptor int32 = 0
 
 func BrickPiSetup() int32 {
-	UART_file_descriptor = serialOpen("/dev/ttyAMA0", 500000)
+	UART_file_descriptor = C.serialOpen("/dev/ttyAMA0", 500000)
 	if UART_file_descriptor == -1 {
 		return -1
 	}
 	return 0
 }
 
-func BrickPiTx(dest byte, ByteCount byte, OutArray []byte) {
+func BrickPiTx(dest byte, ByteCount byte, OutArray [256]byte) {
 	var tx_buffer [256]byte
 	tx_buffer[0] = dest
 	tx_buffer[1] = dest + ByteCount
@@ -448,33 +453,33 @@ func BrickPiTx(dest byte, ByteCount byte, OutArray []byte) {
 	}
 	i = 0
 	for i < (ByteCount + 3) {
-		serialPutchar(UART_file_descriptor, tx_buffer[i])
+		C.serialPutchar(UART_file_descriptor, tx_buffer[i])
 		i++
 	}
 }
 
-func BrickPiRx(InBytes *byte, InArray *byte, timeout int32) int32 { // timeout in uS, not mS
+func BrickPiRx(InBytes *byte, InArray *[256]byte, timeout int32) int32 { // timeout in uS, not mS
 	var rx_buffer [256]byte
 	var RxBytes byte = 0
 	var CheckSum byte = 0
 	var i byte = 0
 	var result int32
-	var OrigionalTick uint32 = CurrentTickUs()
-	for serialDataAvail(UART_file_descriptor) <= 0 {
-		if timeout && ((CurrentTickUs() - OrigionalTick) >= timeout) {
+	var OrigionalTick uint32 = C.CurrentTickUs()
+	for C.serialDataAvail(UART_file_descriptor) <= 0 {
+		if timeout && ((C.CurrentTickUs() - OrigionalTick) >= timeout) {
 			return -2
 		}
 	}
 
 	RxBytes = 0
-	for RxBytes < serialDataAvail(UART_file_descriptor) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
-		RxBytes = serialDataAvail(UART_file_descriptor)
-		usleep(75)
+	for RxBytes < C.serialDataAvail(UART_file_descriptor) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
+		RxBytes = C.serialDataAvail(UART_file_descriptor)
+		time.Sleep(75 * time.Microseconds)
 	}
 
 	i = 0
 	for i < RxBytes {
-		result = serialGetchar(UART_file_descriptor)
+		result = C.serialGetchar(UART_file_descriptor)
 		if result >= 0 {
 			rx_buffer[i] = result
 		} else {
