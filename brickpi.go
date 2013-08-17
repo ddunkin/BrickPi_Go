@@ -8,11 +8,12 @@ package brickpi
 *  http://mattallen37.wordpress.com/
  */
 
-// #include <wiringPi.h>
+// #cgo LDFLAGS: -lwiringPi
+// #include <wiringSerial.h>
 // #include "tick.h"
+import "C"
 
 import (
-	"C"
 	"log"
 	"time"
 )

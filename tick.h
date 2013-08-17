@@ -21,7 +21,7 @@ struct timespec tick_struct;
 unsigned long sec_offset = 0;
 unsigned long nsec_offset = 0;
 
-int ClearTick(){
+void ClearTick(){
   clock_gettime(CLOCK_REALTIME, &tick_struct);
   sec_offset = tick_struct.tv_sec;
   nsec_offset = tick_struct.tv_nsec;
