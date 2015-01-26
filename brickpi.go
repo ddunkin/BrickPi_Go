@@ -123,12 +123,12 @@ var BrickPi = new(BrickPiStruct)
 var array [256]byte
 var bytesReceived byte
 
-func BrickPiChangeAddress(oldAddr byte, newAddr byte) int32 {
+func ChangeAddress(oldAddr byte, newAddr byte) int32 {
 	array[BYTE_MSG_TYPE] = MSG_TYPE_CHANGE_ADDR
 	array[BYTE_NEW_ADDRESS] = newAddr
-	BrickPiTx(oldAddr, 2, array)
+	tx(oldAddr, 2, array)
 
-	if BrickPiRx(&bytesReceived, &array, 5000) != 0 {
+	if rx(&bytesReceived, &array, 5000) != 0 {
 		return -1
 	}
 	if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_CHANGE_ADDR) {
@@ -138,7 +138,7 @@ func BrickPiChangeAddress(oldAddr byte, newAddr byte) int32 {
 	return 0
 }
 
-func BrickPiSetTimeout() int32 {
+func SetTimeout() int32 {
 	var i byte = 0
 	for i < 2 {
 		array[BYTE_MSG_TYPE] = MSG_TYPE_TIMEOUT_SETTINGS
@@ -146,8 +146,8 @@ func BrickPiSetTimeout() int32 {
 		array[(BYTE_TIMEOUT + 1)] = byte((BrickPi.Timeout / 256) & 0xFF)
 		array[(BYTE_TIMEOUT + 2)] = byte((BrickPi.Timeout / 65536) & 0xFF)
 		array[(BYTE_TIMEOUT + 3)] = byte((BrickPi.Timeout / 16777216) & 0xFF)
-		BrickPiTx(BrickPi.Address[i], 5, array)
-		if BrickPiRx(&bytesReceived, &array, 2500) != 0 {
+		tx(BrickPi.Address[i], 5, array)
+		if rx(&bytesReceived, &array, 2500) != 0 {
 			return -1
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_TIMEOUT_SETTINGS) {
@@ -196,7 +196,7 @@ func BitsNeeded(value uint32) byte {
 	return 31
 }
 
-func BrickPiSetupSensors() int32 {
+func SetupSensors() int32 {
 	var i byte = 0
 	for i < 2 {
 		var ii byte = 0
@@ -244,8 +244,8 @@ func BrickPiSetupSensors() int32 {
 			ii++
 		}
 		var txBytes = byte(((bitOffset + 7) / 8) + 3)
-		BrickPiTx(BrickPi.Address[i], txBytes, array)
-		if BrickPiRx(&bytesReceived, &array, 500000) != 0 {
+		tx(BrickPi.Address[i], txBytes, array)
+		if rx(&bytesReceived, &array, 500000) != 0 {
 			return -1
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_SENSOR_TYPE) {
@@ -258,7 +258,7 @@ func BrickPiSetupSensors() int32 {
 
 var retried byte = 0 // For re-trying a failed update.
 
-func BrickPiUpdateValues() int32 {
+func UpdateValues() int32 {
 	var i byte = 0
 	var ii byte = 0
 	for i < 2 {
@@ -343,9 +343,9 @@ func BrickPiUpdateValues() int32 {
 		}
 
 		var txBytes = byte(((bitOffset + 7) / 8) + 1)
-		BrickPiTx(BrickPi.Address[i], txBytes, array)
+		tx(BrickPi.Address[i], txBytes, array)
 
-		var result = BrickPiRx(&bytesReceived, &array, 7500)
+		var result = rx(&bytesReceived, &array, 7500)
 
 		if result != -2 { // -2 is the only error that indicates that the BrickPi uC did not properly receive the message
 			BrickPi.EncoderOffset[((i * 2) + PORT_A)] = 0
@@ -353,7 +353,7 @@ func BrickPiUpdateValues() int32 {
 		}
 
 		if result != 0 || (array[BYTE_MSG_TYPE] != MSG_TYPE_VALUES) {
-			log.Printf("BrickPiRx error: %d\n", result)
+			log.Printf("rx error: %d\n", result)
 			if retried < 2 {
 				retried++
 				goto __RETRY_COMMUNICATION__
@@ -434,7 +434,7 @@ func BrickPiUpdateValues() int32 {
 
 var uartFileDescriptor C.int = 0
 
-func BrickPiSetup() int32 {
+func Setup() int32 {
 	serialPath := C.CString("/dev/ttyAMA0")
 	defer C.free(unsafe.Pointer(serialPath))
 	uartFileDescriptor = C.serialOpen(serialPath, C.int(500000))
@@ -444,7 +444,7 @@ func BrickPiSetup() int32 {
 	return 0
 }
 
-func BrickPiTx(dest byte, byteCount byte, outArray [256]byte) {
+func tx(dest byte, byteCount byte, outArray [256]byte) {
 	var txBuffer [256]byte
 	txBuffer[0] = dest
 	txBuffer[1] = dest + byteCount
@@ -462,7 +462,7 @@ func BrickPiTx(dest byte, byteCount byte, outArray [256]byte) {
 	}
 }
 
-func BrickPiRx(inBytes *byte, inArray *[256]byte, timeout int32) int32 { // timeout in uS, not mS
+func rx(inBytes *byte, inArray *[256]byte, timeout int32) int32 { // timeout in uS, not mS
 	var rxBuffer [256]byte
 	var rxBytes byte = 0
 	var checksum byte = 0
