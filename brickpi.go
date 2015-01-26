@@ -8,10 +8,12 @@ package brickpi
 *  http://mattallen37.wordpress.com/
  */
 
-// #cgo LDFLAGS: -lwiringPi
+// #cgo LDFLAGS: -lwiringPi -lrt
+// #include <stdlib.h>
 // #include <wiringSerial.h>
 // #include "tick.h"
 import "C"
+import "unsafe"
 
 import (
 	"log"
@@ -122,7 +124,6 @@ var Array [256]byte
 var BytesReceived byte
 
 func BrickPiChangeAddress(OldAddr byte, NewAddr byte) int32 {
-	var i byte = 0
 	Array[BYTE_MSG_TYPE] = MSG_TYPE_CHANGE_ADDR
 	Array[BYTE_NEW_ADDRESS] = NewAddr
 	BrickPiTx(OldAddr, 2, Array)
@@ -431,10 +432,12 @@ func BrickPiUpdateValues() int32 {
 	return 0
 }
 
-var UART_file_descriptor int32 = 0
+var UART_file_descriptor C.int = 0
 
 func BrickPiSetup() int32 {
-	UART_file_descriptor = C.serialOpen("/dev/ttyAMA0", 500000)
+	serialPath := C.CString("/dev/ttyAMA0")
+	defer C.free(unsafe.Pointer(serialPath))
+	UART_file_descriptor = C.serialOpen(serialPath, C.int(500000))
 	if UART_file_descriptor == -1 {
 		return -1
 	}
@@ -454,7 +457,7 @@ func BrickPiTx(dest byte, ByteCount byte, OutArray [256]byte) {
 	}
 	i = 0
 	for i < (ByteCount + 3) {
-		C.serialPutchar(UART_file_descriptor, tx_buffer[i])
+		C.serialPutchar(UART_file_descriptor, C.uchar(tx_buffer[i]))
 		i++
 	}
 }
@@ -464,23 +467,23 @@ func BrickPiRx(InBytes *byte, InArray *[256]byte, timeout int32) int32 { // time
 	var RxBytes byte = 0
 	var CheckSum byte = 0
 	var i byte = 0
-	var result int32
-	var OrigionalTick uint32 = C.CurrentTickUs()
+	var result byte
+	var OrigionalTick C.ulong = C.CurrentTickUs()
 	for C.serialDataAvail(UART_file_descriptor) <= 0 {
-		if timeout && ((C.CurrentTickUs() - OrigionalTick) >= timeout) {
+		if timeout != 0 && ((C.CurrentTickUs() - OrigionalTick) >= C.ulong(timeout)) {
 			return -2
 		}
 	}
 
 	RxBytes = 0
-	for RxBytes < C.serialDataAvail(UART_file_descriptor) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
-		RxBytes = C.serialDataAvail(UART_file_descriptor)
-		time.Sleep(75 * time.Microseconds)
+	for RxBytes < byte(C.serialDataAvail(UART_file_descriptor)) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
+		RxBytes = byte(C.serialDataAvail(UART_file_descriptor))
+		time.Sleep(75 * time.Microsecond)
 	}
 
 	i = 0
 	for i < RxBytes {
-		result = C.serialGetchar(UART_file_descriptor)
+		result = byte(C.serialGetchar(UART_file_descriptor))
 		if result >= 0 {
 			rx_buffer[i] = result
 		} else {
