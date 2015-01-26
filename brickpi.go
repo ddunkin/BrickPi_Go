@@ -435,6 +435,7 @@ func UpdateValues() int32 {
 var uartFileDescriptor C.int = 0
 
 func Setup() int32 {
+	C.ClearTick()
 	serialPath := C.CString("/dev/ttyAMA0")
 	defer C.free(unsafe.Pointer(serialPath))
 	uartFileDescriptor = C.serialOpen(serialPath, C.int(500000))
