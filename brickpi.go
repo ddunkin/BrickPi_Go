@@ -11,7 +11,6 @@ package brickpi
 // #cgo LDFLAGS: -lwiringPi -lrt
 // #include <stdlib.h>
 // #include <wiringSerial.h>
-// #include "tick.h"
 import "C"
 import "unsafe"
 
@@ -129,7 +128,7 @@ func ChangeAddress(oldAddr byte, newAddr byte) error {
 	array[BYTE_NEW_ADDRESS] = newAddr
 	tx(oldAddr, 2, array)
 
-	if rx(&bytesReceived, &array, 5000) != 0 {
+	if rx(&bytesReceived, &array, 5000 * time.Microsecond) != 0 {
 		return errors.New("error")
 	}
 	if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_CHANGE_ADDR) {
@@ -147,7 +146,7 @@ func SetTimeout() error {
 		array[(BYTE_TIMEOUT + 2)] = byte((BrickPi.Timeout / 65536) & 0xFF)
 		array[(BYTE_TIMEOUT + 3)] = byte((BrickPi.Timeout / 16777216) & 0xFF)
 		tx(BrickPi.Address[i], 5, array)
-		if rx(&bytesReceived, &array, 2500) != 0 {
+		if rx(&bytesReceived, &array, 2500 * time.Microsecond) != 0 {
 			return errors.New("error")
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_TIMEOUT_SETTINGS) {
@@ -232,7 +231,7 @@ func SetupSensors() error {
 		txBytes := byte(((bitOffset + 7) / 8) + 3)
 		tx(BrickPi.Address[i], txBytes, array)
 
-		if rx(&bytesReceived, &array, 500000) != 0 {
+		if rx(&bytesReceived, &array, 500 * time.Millisecond) != 0 {
 			return errors.New("error")
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_SENSOR_TYPE) {
@@ -318,7 +317,7 @@ func UpdateValues() error {
 		txBytes := byte(((bitOffset + 7) / 8) + 1)
 		tx(BrickPi.Address[i], txBytes, array)
 
-		result := rx(&bytesReceived, &array, 7500)
+		result := rx(&bytesReceived, &array, 7500 * time.Microsecond)
 
 		if result != -2 { // -2 is the only error that indicates that the BrickPi uC did not properly receive the message
 			BrickPi.EncoderOffset[((i * 2) + PORT_A)] = 0
@@ -399,7 +398,6 @@ func UpdateValues() error {
 var uartFileDescriptor C.int = 0
 
 func Setup() error {
-	C.ClearTick()
 	serialPath := C.CString("/dev/ttyAMA0")
 	defer C.free(unsafe.Pointer(serialPath))
 	uartFileDescriptor = C.serialOpen(serialPath, C.int(500000))
@@ -427,17 +425,14 @@ func tx(dest byte, byteCount byte, outArray [256]byte) {
 	log.Printf("tx end\n")
 }
 
-func rx(inBytes *byte, inArray *[256]byte, timeout int32) int32 { // timeout in uS, not mS
+func rx(inBytes *byte, inArray *[256]byte, timeout time.Duration) int32 {
 	//timeout = 0
 	log.Printf("rx begin (timeout %d)\n", timeout)
 	var rxBuffer [256]byte
-	var originalTick = C.CurrentTickUs()
-	//log.Printf("rx originalTick %d\n", originalTick)
+	startTime := time.Now()
 	for C.serialDataAvail(uartFileDescriptor) <= 0 {
 		//log.Printf("avail %d\n", C.serialDataAvail(uartFileDescriptor))
-		currentTick := C.CurrentTickUs()
-		//log.Printf("rx currentTick %d\n", currentTick)
-		if timeout != 0 && ((currentTick - originalTick) >= C.ulong(timeout)) {
+		if timeout != 0 && time.Since(startTime) > timeout {
 			log.Printf("rx error -2\n")
 			return -2
 		}
