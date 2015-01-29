@@ -162,7 +162,7 @@ var bitOffset uint32 = 0
 func addBits(byte_offset byte, bit_offset byte, bits byte, value uint32) {
 	log.Printf("addBits\n")
 	for i := byte(0); i < bits; i++ {
-		if value & 0x01 != 0 {
+		if value&0x01 != 0 {
 			array[(uint32(byte_offset) + ((uint32(bit_offset) + bitOffset + uint32(i)) / 8))] |= byte(0x01 << ((uint32(bit_offset) + bitOffset + uint32(i)) % 8))
 		}
 		value /= 2
@@ -419,36 +419,32 @@ func tx(dest byte, byteCount byte, outArray [256]byte) {
 		txBuffer[1] += outArray[i]
 		txBuffer[i+3] = outArray[i]
 	}
-	log.Printf("tx %x", txBuffer[0:(byteCount + 3)])
-	for _, b := range txBuffer[0:(byteCount + 3)] {
+	txBytes := txBuffer[0:(byteCount + 3)]
+	log.Printf("tx %x", txBytes)
+	for _, b := range txBytes {
 		C.serialPutchar(uartFileDescriptor, C.uchar(b))
 	}
 	log.Printf("tx end\n")
 }
 
 func rx(inBytes *byte, inArray *[256]byte, timeout int32) int32 { // timeout in uS, not mS
-	log.Printf("rx begin\n")
-	timeout = 0
+	//timeout = 0
+	log.Printf("rx begin (timeout %d)\n", timeout)
 	var rxBuffer [256]byte
-	var rxBytes byte = 0
-	var checksum byte = 0
 	var originalTick = C.CurrentTickUs()
-	log.Printf("rx timeout %d\n", timeout)
-	log.Printf("rx timeout %d\n", C.ulong(timeout))
-	log.Printf("rx originalTick %d\n", originalTick)
+	//log.Printf("rx originalTick %d\n", originalTick)
 	for C.serialDataAvail(uartFileDescriptor) <= 0 {
-		log.Printf("avail %d\n", C.serialDataAvail(uartFileDescriptor))
+		//log.Printf("avail %d\n", C.serialDataAvail(uartFileDescriptor))
 		currentTick := C.CurrentTickUs()
-		log.Printf("rx currentTick %d\n", currentTick)
+		//log.Printf("rx currentTick %d\n", currentTick)
 		if timeout != 0 && ((currentTick - originalTick) >= C.ulong(timeout)) {
 			log.Printf("rx error -2\n")
 			return -2
 		}
 	}
 
-	rxBytes = 0
+	var rxBytes byte = 0
 	for rxBytes < byte(C.serialDataAvail(uartFileDescriptor)) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
-		log.Printf("poop\n")
 		rxBytes = byte(C.serialDataAvail(uartFileDescriptor))
 		time.Sleep(75 * time.Microsecond)
 	}
@@ -474,7 +470,7 @@ func rx(inBytes *byte, inArray *[256]byte, timeout int32) int32 { // timeout in 
 		return -6
 	}
 
-	checksum = rxBuffer[1]
+	checksum := rxBuffer[1]
 
 	for i := byte(0); i < (rxBytes - 2); i++ {
 		checksum += rxBuffer[i+2]
