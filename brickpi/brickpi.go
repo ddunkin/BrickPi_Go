@@ -8,17 +8,11 @@ package brickpi
 *  http://mattallen37.wordpress.com/
  */
 
-// #cgo LDFLAGS: -lwiringPi -lrt
-// #include <stdlib.h>
-// #include <unistd.h>
-// #include <wiringSerial.h>
-import "C"
-
 import (
 	"errors"
 	"log"
 	"time"
-	"unsafe"
+	"wiringpi"
 )
 
 const (
@@ -403,20 +397,15 @@ func UpdateValues() error {
 	return nil
 }
 
-var uartFileDescriptor C.int = 0
+var uart *wiringpi.Serial
 
 func Setup() error {
-	serialPath := C.CString("/dev/ttyAMA0")
-	defer C.free(unsafe.Pointer(serialPath))
-	uartFileDescriptor = C.serialOpen(serialPath, C.int(500000))
-	if uartFileDescriptor == -1 {
-		return errors.New("Could not open device")
-	}
-	return nil
+	var err error
+	uart, err = wiringpi.SerialOpen("/dev/ttyAMA0", 500000)
+	return err
 }
 
 func tx(dest byte, byteCount byte, outArray [256]byte) {
-	//C.BrickPiTx(C.uchar(dest), C.uchar(byteCount), (*C.uchar)(unsafe.Pointer(&outArray[0])))
 	log.Printf("tx begin\n")
 	var txBuffer [256]byte
 	txBuffer[0] = dest
@@ -428,41 +417,37 @@ func tx(dest byte, byteCount byte, outArray [256]byte) {
 	}
 	txBytes := txBuffer[0:(byteCount + 3)]
 	log.Printf("tx %x", txBytes)
-	C.write(uartFileDescriptor, unsafe.Pointer(&txBytes[0]), C.size_t(len(txBytes)))
+	uart.PutBytes(txBytes)
 	log.Printf("tx end\n")
 }
 
 func rx(timeout time.Duration) (byte, [256]byte, int32) {
 	var inBytes byte
 	var inArray [256]byte
-	//res := int32(C.BrickPiRx((*C.uchar)(&inBytes), (*C.uchar)(unsafe.Pointer(&inArray[0])), C.long(timeout / time.Microsecond)))
-	//log.Printf("res %d", res)
-	//return inBytes, inArray, res
 
-	//timeout = 0
 	log.Printf("rx begin (timeout %d)\n", timeout)
 	var rxBuffer [256]byte
 	startTime := time.Now()
-	for C.serialDataAvail(uartFileDescriptor) <= 0 {
+	for uart.DataAvail() <= 0 {
 		if timeout != 0 && time.Since(startTime) > timeout {
 			log.Printf("rx error -2\n")
 			return inBytes, inArray, -2
 		}
 	}
 
-	var rxBytes byte = 0
-	for rxBytes < byte(C.serialDataAvail(uartFileDescriptor)) {
-		rxBytes = byte(C.serialDataAvail(uartFileDescriptor))
+	rxBytes := 0
+	for rxBytes < uart.DataAvail() {
+		rxBytes = uart.DataAvail()
 		time.Sleep(75 * time.Microsecond)
 	}
 	log.Printf("rx avail %d\n", rxBytes)
 
-	for i := byte(0); i < rxBytes; i++ {
-		result := byte(C.serialGetchar(uartFileDescriptor))
-		if result >= 0 {
+	for i := 0; i < rxBytes; i++ {
+		result, err := uart.GetByte()
+		if err == nil {
 			rxBuffer[i] = result
 		} else {
-			log.Printf("rx error -1\n")
+			log.Printf("rx error -1 (%v)\n", err)
 			return inBytes, inArray, -1
 		}
 	}
@@ -472,14 +457,14 @@ func rx(timeout time.Duration) (byte, [256]byte, int32) {
 		return inBytes, inArray, -4
 	}
 
-	if rxBytes < (rxBuffer[1] + 2) {
+	if rxBytes < int(rxBuffer[1] + 2) {
 		log.Printf("rx error -6\n")
 		return inBytes, inArray, -6
 	}
 
 	checksum := rxBuffer[1]
 
-	for i := byte(0); i < (rxBytes - 2); i++ {
+	for i := 0; i < (rxBytes - 2); i++ {
 		checksum += rxBuffer[i+2]
 		inArray[i] = rxBuffer[i+2]
 	}
@@ -489,7 +474,7 @@ func rx(timeout time.Duration) (byte, [256]byte, int32) {
 		return inBytes, inArray, -5
 	}
 
-	inBytes = (rxBytes - 2)
+	inBytes = byte(rxBytes - 2)
 
 	log.Printf("rx end\n")
 	return inBytes, inArray, 0
