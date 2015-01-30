@@ -10,14 +10,15 @@ package brickpi
 
 // #cgo LDFLAGS: -lwiringPi -lrt
 // #include <stdlib.h>
+// #include <unistd.h>
 // #include <wiringSerial.h>
 import "C"
-import "unsafe"
 
 import (
 	"errors"
 	"log"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -128,7 +129,9 @@ func ChangeAddress(oldAddr byte, newAddr byte) error {
 	array[BYTE_NEW_ADDRESS] = newAddr
 	tx(oldAddr, 2, array)
 
-	if rx(&bytesReceived, &array, 5000 * time.Microsecond) != 0 {
+	var res int32
+	bytesReceived, array, res = rx(5000 * time.Microsecond)
+	if res != 0 {
 		return errors.New("error")
 	}
 	if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_CHANGE_ADDR) {
@@ -146,7 +149,9 @@ func SetTimeout() error {
 		array[(BYTE_TIMEOUT + 2)] = byte((BrickPi.Timeout / 65536) & 0xFF)
 		array[(BYTE_TIMEOUT + 3)] = byte((BrickPi.Timeout / 16777216) & 0xFF)
 		tx(BrickPi.Address[i], 5, array)
-		if rx(&bytesReceived, &array, 2500 * time.Microsecond) != 0 {
+		var res int32
+		bytesReceived, array, res = rx(2500 * time.Microsecond)
+		if res != 0 {
 			return errors.New("error")
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_TIMEOUT_SETTINGS) {
@@ -231,7 +236,9 @@ func SetupSensors() error {
 		txBytes := byte(((bitOffset + 7) / 8) + 3)
 		tx(BrickPi.Address[i], txBytes, array)
 
-		if rx(&bytesReceived, &array, 500 * time.Millisecond) != 0 {
+		var res int32
+		bytesReceived, array, res = rx(500 * time.Millisecond)
+		if res != 0 {
 			return errors.New("error")
 		}
 		if !(bytesReceived == 1 && array[BYTE_MSG_TYPE] == MSG_TYPE_SENSOR_TYPE) {
@@ -298,7 +305,7 @@ func UpdateValues() error {
 			addBits(1, 0, 10, uint32((((speed&0xFF)<<2)|(int32(dir)<<1)|int32(BrickPi.MotorEnable[port]&0x01))&0x3FF))
 		}
 
-		for ii := 0; ii < 2; i++ {
+		for ii := 0; ii < 2; ii++ {
 			port := (i * 2) + ii
 			if BrickPi.SensorType[port] == TYPE_SENSOR_I2C ||
 				BrickPi.SensorType[port] == TYPE_SENSOR_I2C_9V {
@@ -317,7 +324,8 @@ func UpdateValues() error {
 		txBytes := byte(((bitOffset + 7) / 8) + 1)
 		tx(BrickPi.Address[i], txBytes, array)
 
-		result := rx(&bytesReceived, &array, 7500 * time.Microsecond)
+		var result int32
+		bytesReceived, array, result = rx(7500 * time.Microsecond)
 
 		if result != -2 { // -2 is the only error that indicates that the BrickPi uC did not properly receive the message
 			BrickPi.EncoderOffset[((i * 2) + PORT_A)] = 0
@@ -408,6 +416,7 @@ func Setup() error {
 }
 
 func tx(dest byte, byteCount byte, outArray [256]byte) {
+	//C.BrickPiTx(C.uchar(dest), C.uchar(byteCount), (*C.uchar)(unsafe.Pointer(&outArray[0])))
 	log.Printf("tx begin\n")
 	var txBuffer [256]byte
 	txBuffer[0] = dest
@@ -419,27 +428,30 @@ func tx(dest byte, byteCount byte, outArray [256]byte) {
 	}
 	txBytes := txBuffer[0:(byteCount + 3)]
 	log.Printf("tx %x", txBytes)
-	for _, b := range txBytes {
-		C.serialPutchar(uartFileDescriptor, C.uchar(b))
-	}
+	C.write(uartFileDescriptor, unsafe.Pointer(&txBytes[0]), C.size_t(len(txBytes)))
 	log.Printf("tx end\n")
 }
 
-func rx(inBytes *byte, inArray *[256]byte, timeout time.Duration) int32 {
+func rx(timeout time.Duration) (byte, [256]byte, int32) {
+	var inBytes byte
+	var inArray [256]byte
+	//res := int32(C.BrickPiRx((*C.uchar)(&inBytes), (*C.uchar)(unsafe.Pointer(&inArray[0])), C.long(timeout / time.Microsecond)))
+	//log.Printf("res %d", res)
+	//return inBytes, inArray, res
+
 	//timeout = 0
 	log.Printf("rx begin (timeout %d)\n", timeout)
 	var rxBuffer [256]byte
 	startTime := time.Now()
 	for C.serialDataAvail(uartFileDescriptor) <= 0 {
-		//log.Printf("avail %d\n", C.serialDataAvail(uartFileDescriptor))
 		if timeout != 0 && time.Since(startTime) > timeout {
 			log.Printf("rx error -2\n")
-			return -2
+			return inBytes, inArray, -2
 		}
 	}
 
 	var rxBytes byte = 0
-	for rxBytes < byte(C.serialDataAvail(uartFileDescriptor)) { // If it's been 1 ms since the last data was received, assume it's the end of the message.
+	for rxBytes < byte(C.serialDataAvail(uartFileDescriptor)) {
 		rxBytes = byte(C.serialDataAvail(uartFileDescriptor))
 		time.Sleep(75 * time.Microsecond)
 	}
@@ -451,18 +463,18 @@ func rx(inBytes *byte, inArray *[256]byte, timeout time.Duration) int32 {
 			rxBuffer[i] = result
 		} else {
 			log.Printf("rx error -1\n")
-			return -1
+			return inBytes, inArray, -1
 		}
 	}
 
 	if rxBytes < 2 {
 		log.Printf("rx error -4\n")
-		return -4
+		return inBytes, inArray, -4
 	}
 
 	if rxBytes < (rxBuffer[1] + 2) {
 		log.Printf("rx error -6\n")
-		return -6
+		return inBytes, inArray, -6
 	}
 
 	checksum := rxBuffer[1]
@@ -474,11 +486,11 @@ func rx(inBytes *byte, inArray *[256]byte, timeout time.Duration) int32 {
 
 	if checksum != rxBuffer[0] {
 		log.Printf("rx error -5\n")
-		return -5
+		return inBytes, inArray, -5
 	}
 
-	*inBytes = (rxBytes - 2)
+	inBytes = (rxBytes - 2)
 
 	log.Printf("rx end\n")
-	return 0
+	return inBytes, inArray, 0
 }
